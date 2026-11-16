@@ -73,3 +73,90 @@ Write times don't include parsing the CSV: the parsed data is cached once, then 
 4. **Station partitions are slower than month partitions: confirmed, and by a lot.** They are 10× slower on Q1 and 16× slower on the June filter. With 582 small files, the time goes on opening files and scheduling tasks rather than on reading data. The files are also 30% bigger, because compression works less well on small files.
 
 **Decision:** Part 1 uses month-partitioned Parquet. It is about as fast as flat Parquet on every query here. It also matches the time-ordered data that Part 2 streams in, so new months can be added as new folders without rewriting the old ones.
+
+## Part 2: Kafka streaming
+
+Part 2 replays historical Divvy bike trips as a simulated live stream using Apache Kafka. A Python producer reads trip records from the 2017 Q1 and Q2 CSV files and publishes them to the `divvy-trips` Kafka topic. A consumer reads the events, prints each trip, and maintains an hourly running count by starting station.
+
+
+### Start it
+
+Install the Python dependency (requires `uv`):
+
+```bash
+uv venv
+uv pip install -r requirements.txt
+```
+
+Start the Kafka broker:
+
+```bash
+docker compose up -d kafka
+```
+
+Create the topic (only needed once):
+
+```bash
+docker exec divvy-kafka /opt/kafka/bin/kafka-topics.sh \
+  --create --if-not-exists \
+  --topic divvy-trips \
+  --bootstrap-server localhost:9092 \
+  --partitions 3 \
+  --replication-factor 1
+```
+
+Open two terminals in the project directory.
+
+**Terminal 1 — Consumer:**
+
+```bash
+uv run --no-project python stream/consumer.py --limit 100
+```
+
+**Terminal 2 — Producer:**
+
+```bash
+uv run --no-project python stream/producer.py --limit 100 --delay 0.05
+```
+
+The producer sends 100 historical trips into Kafka. The consumer reads the events, prints each trip's station, hour and running count, then displays the aggregated hourly totals.
+
+For a clean demonstration, use a newly created empty topic. Otherwise, the consumer may replay messages from previous runs.
+
+
+### Files
+
+| File | What it does |
+|---|---|
+| `stream/producer.py` | Reads Divvy trip CSV rows and publishes trip events to Kafka, with a configurable event limit and delay |
+| `stream/consumer.py` | Consumes Kafka events, prints incoming trips, counts trips by station and hour, and skips duplicate trip IDs within a run |
+| `docker-compose.yml` | Runs the Kafka broker alongside the existing Spark service |
+
+### Question 3: How many trips are starting at each station this hour?
+
+The consumer groups incoming trip events by `from_station_id` and the hour extracted from `start_time`. Each unique trip increments the corresponding station-hour count.
+
+Example output from a clean 100-event test:
+
+```text
+Station 2   | 2017-03-31 22:00 | 4 trips
+Station 81  | 2017-03-31 22:00 | 3 trips
+Station 117 | 2017-03-31 23:00 | 3 trips
+Station 284 | 2017-03-31 22:00 | 4 trips
+Station 327 | 2017-03-31 23:00 | 2 trips
+
+[consumer] Processed 100 events.
+[consumer] Skipped 0 duplicate events.
+```
+
+The consumer successfully processed all 100 events without duplicates. These results demonstrate hourly trip counting using historical Divvy data replayed through Kafka.
+
+### Streaming design
+
+The producer sends events containing `trip_id`, `start_time`, and `from_station_id`. Kafka stores them in the `divvy-trips` topic, configured with three partitions and a replication factor of one.
+
+The station ID is used as the Kafka message key, so events from the same station are assigned to the same partition. The consumer processes the events and updates the hourly counts.
+
+Unlike Part 1, which analyzes the complete historical dataset using Spark, Part 2 processes trip events incrementally as they arrive.
+
+
