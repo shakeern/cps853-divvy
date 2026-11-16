@@ -1,0 +1,5 @@
+layout,size_mb,files,write_s,rows
+csv,242.3,2,,1551505
+parquet_flat,42.1,4,12.6,1551505
+parquet_by_month,42.7,6,25.2,1551505
+parquet_by_station,54.1,582,96.7,1551505

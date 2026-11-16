@@ -1,0 +1,13 @@
+layout,query,median_s,min_s,max_s,runs,result_check
+csv,q1_top_stations,4.066,3.283,5.292,5,10
+csv,q2_usertype_by_hour,5.042,4.489,9.224,5,48
+csv,june_filter,3.846,3.489,4.949,5,505164
+parquet_flat,q1_top_stations,0.879,0.664,1.257,5,10
+parquet_flat,q2_usertype_by_hour,2.55,2.207,2.722,5,48
+parquet_flat,june_filter,0.738,0.561,1.691,5,505164
+parquet_by_month,q1_top_stations,1.047,0.889,1.119,5,10
+parquet_by_month,q2_usertype_by_hour,2.748,2.521,3.333,5,48
+parquet_by_month,june_filter,0.673,0.657,0.779,5,505164
+parquet_by_station,q1_top_stations,32.838,30.517,44.096,5,10
+parquet_by_station,q2_usertype_by_hour,33.134,32.466,33.973,5,48
+parquet_by_station,june_filter,30.624,29.234,31.68,5,505164

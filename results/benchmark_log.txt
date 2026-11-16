@@ -1,0 +1,13 @@
+[bench] csv                  q1_top_stations      median   1.27 s  (runs: 2.55, 1.74, 1.27, 1.26, 1.26)  result check: 10
+[bench] csv                  q2_usertype_by_hour  median   2.95 s  (runs: 4.93, 3.08, 2.85, 2.95, 2.60)  result check: 48
+[bench] csv                  june_filter          median   1.88 s  (runs: 2.16, 2.45, 1.81, 1.88, 1.65)  result check: 505164
+[bench] parquet_flat         q1_top_stations      median   0.33 s  (runs: 0.37, 0.41, 0.27, 0.32, 0.33)  result check: 10
+[bench] parquet_flat         q2_usertype_by_hour  median   1.39 s  (runs: 1.66, 1.32, 1.52, 1.29, 1.39)  result check: 48
+[bench] parquet_flat         june_filter          median   0.25 s  (runs: 0.58, 0.25, 0.25, 0.22, 0.29)  result check: 505164
+[bench] parquet_by_month     q1_top_stations      median   0.37 s  (runs: 0.54, 0.33, 0.37, 0.27, 0.45)  result check: 10
+[bench] parquet_by_month     q2_usertype_by_hour  median   1.50 s  (runs: 1.59, 1.51, 1.49, 1.50, 1.35)  result check: 48
+[bench] parquet_by_month     june_filter          median   0.21 s  (runs: 0.24, 0.21, 0.33, 0.19, 0.17)  result check: 505164
+[bench] parquet_by_station   q1_top_stations      median   3.65 s  (runs: 5.02, 3.82, 3.58, 3.65, 3.51)  result check: 10
+[bench] parquet_by_station   q2_usertype_by_hour  median   5.39 s  (runs: 5.72, 5.72, 5.38, 5.39, 5.39)  result check: 48
+[bench] parquet_by_station   june_filter          median   3.31 s  (runs: 3.31, 3.38, 3.14, 3.33, 2.93)  result check: 505164
+[bench] results written to /home/claude/cps853-divvy/jobs/../results/benchmark.csv

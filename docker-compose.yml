@@ -1,0 +1,16 @@
+# CPS 853 Team 7 - Divvy data platform.
+# Part 1 (Store and batch) is the spark-batch service. Parts 2-4 (Kafka,
+# PostgreSQL, quality checks) get added as more services in this file.
+services:
+  spark-batch:
+    build: .
+    container_name: divvy-spark-batch
+    environment:
+      SPARK_DRIVER_MEMORY: 2g
+      BENCH_RUNS: ${BENCH_RUNS:-5}
+      SKIP_BENCHMARK: ${SKIP_BENCHMARK:-0}
+    volumes:
+      - ./data:/app/data          # raw CSVs in, Parquet lake out
+      - ./output:/app/output      # Q1/Q2 answers, loaded into the database in Part 3
+      - ./results:/app/results    # sizes and benchmark timings for the report
+    mem_limit: 3g                 # leaves room for Kafka + PostgreSQL on an 8 GB laptop
