@@ -9,9 +9,9 @@ import os
 
 from pyspark.sql import functions as F
 
-from common import (LAYOUTS, RESULTS, STATIONS_CSV, STATIONS_PARQUET, TRIPS_CSV,
+from common import (CHECKED_TRIPS, LAYOUTS, RESULTS, STATIONS_CSV, STATIONS_PARQUET, TRIPS_CSV,
                     Timer, count_data_files, dir_size_mb, read_stations_csv,
-                    read_trips_csv, reset_dir, spark_session)
+                    parse_trips, read_trips_csv, reset_dir, spark_session)
 
 
 def main():
@@ -21,10 +21,21 @@ def main():
     csv_files = sorted(glob.glob(TRIPS_CSV))
     csv_mb = sum(dir_size_mb(f) for f in csv_files)
 
-    trips = read_trips_csv(spark).withColumn("month", F.month("start_time"))
+    csv_rows = read_trips_csv(spark).count()
+    print(f"[convert] rows in the raw CSV: {csv_rows:,} ({len(csv_files)} files, {csv_mb:.1f} MB)")
+
+    # Convert only the rows that passed the Part 4 checks. Without them (the
+    # checks were skipped), fall back to the raw CSV.
+    if os.path.isdir(CHECKED_TRIPS):
+        source = parse_trips(spark.read.parquet(CHECKED_TRIPS))
+        print(f"[convert] reading the rows that passed the quality checks ({CHECKED_TRIPS})")
+    else:
+        source = read_trips_csv(spark)
+        print("[convert] WARNING: no quality-checked rows found; converting the raw CSV unchecked")
+    trips = source.withColumn("month", F.month("start_time"))
     trips.cache()
     rows_in = trips.count()
-    print(f"[convert] rows read from CSV: {rows_in:,} ({len(csv_files)} files, {csv_mb:.1f} MB)")
+    print(f"[convert] rows to convert: {rows_in:,} ({csv_rows - rows_in:,} rejected by the checks)")
 
     writers = {
         # One dataset, a few large files.
@@ -37,7 +48,7 @@ def main():
     }
 
     rows = [{"layout": "csv", "size_mb": round(csv_mb, 1), "files": len(csv_files),
-             "write_s": "", "rows": rows_in}]
+             "write_s": "", "rows": csv_rows}]
     for name, write in writers.items():
         path = LAYOUTS[name]
         reset_dir(path)

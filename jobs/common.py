@@ -22,6 +22,9 @@ LAYOUTS = {
     "parquet_by_station": f"{LAKE}/trips_parquet_by_station",
 }
 STATIONS_PARQUET = f"{LAKE}/stations_parquet"
+# Written by quality/batch_checks.py: the raw rows (still text) that passed
+# every reject check. convert.py builds the Parquet layouts from these.
+CHECKED_TRIPS = f"{LAKE}/trips_checked"
 
 TS_FMT = "M/d/yyyy H:mm:ss"
 

@@ -1,45 +1,68 @@
 # CPS 853 Team 7 — Divvy bike trips data platform
 
-Dataset: Divvy trips, 2017 Q1 and Q2 (1,551,505 trips), and 582 stations. Source: https://divvybikes.com/system-data
+Dataset: Divvy trips, 2017 Q1 and Q2 (1,551,505 trips), and 582 stations.
+Source: https://divvybikes.com/system-data · Licence: https://divvybikes.com/data-license-agreement
 
-## Start it (three commands)
+## Start it
+
+Needs Docker Desktop, running, with at least 8 GB of memory.
 
 ```bash
-# 1. Put the three CSVs in data/raw/:
-#    Divvy_Trips_2017_Q1.csv  Divvy_Trips_2017_Q2.csv  Divvy_Stations_2017_Q1Q2.csv
+git clone https://github.com/shakeern/cps853-divvy.git
 cd cps853-divvy
-docker compose build
-docker compose run --rm spark-batch
+docker compose up --build
 ```
 
-That runs Part 1 from start to finish: converts the data, answers Q1 and Q2, then runs the benchmark. The full run takes about 5 minutes; the benchmark is most of that.
-To skip the benchmark (e.g. for the checkpoint recording): `SKIP_BENCHMARK=1 docker compose run --rm spark-batch`.
+The first step downloads the three CSVs into `data/raw/` (skipped if they are already there). Then, in order:
 
-| Folder | What's in it |
+1. **Part 4 + Part 1:** the quality checks run on every raw row, the rows that pass are converted to Parquet, and Spark answers Q1 and Q2.
+2. **Part 3:** the answers, stations and check results are loaded into PostgreSQL.
+3. **Part 2:** Kafka starts, and the producer replays 20,000 trips in start-time order (`STREAM_LIMIT=0` sends all of them).
+4. **Parts 3 + 4:** the stream sink checks each message and writes it to PostgreSQL. It keeps running until you press Ctrl-C.
+
+In a second terminal, once the stream is running:
+
+| Command | What it shows |
 |---|---|
-| `data/raw/` | the CSVs, as downloaded (not committed) |
-| `data/lake/` | Parquet output: three trip layouts plus stations |
-| `output/` | Q1 and Q2 answers as CSV, which Part 3 loads into PostgreSQL |
-| `results/` | `storage_sizes.csv` and `benchmark.csv`, for the report |
+| `docker compose exec postgres psql -U divvy -f /serve/queries.sql` | The three questions, answered by the database |
+| `docker compose run --rm report` | Response times for Q1–Q3, then the quality and row-count report |
+| `docker compose run --rm consumer` | Part 2's console consumer printing trips and hourly counts |
+| `docker compose run --rm -e SKIP_BENCHMARK=0 spark-batch` | Part 1 again, plus the storage benchmark (several minutes) |
+| `docker compose down -v` | Stop everything and wipe the database and Kafka topic, for a clean rerun |
 
-## Part 1: Store and batch
+Results for the report land in `results/` (benchmark, check results, response times, quality report) and `output/` (Q1 and Q2 answers, quarantined rows).
+
+## Architecture
+
+```
+data/raw/*.csv ──► Part 4 batch checks ──► rejected rows ──► output/quarantine_batch.csv ─┐
+                         │ rows that pass                                                  │
+                         ▼                                                                 ▼
+              Part 1: Parquet (data/lake/) ──► Spark Q1, Q2 ──► output/*.csv ──► PostgreSQL (Part 3)
+                                                                                           ▲
+data/raw/*.csv ──► Part 2 producer (sorted by start_time) ──► Kafka divvy-trips            │
+                                                                │                          │
+                                                                ▼                          │
+                                         stream sink: Part 4 stream checks ──► trip_starts, station_hourly_counts (Q3)
+                                                                └── failing messages ──► quarantine
+```
+
+## Part 1: Store and batch (owner: Shakeer)
 
 | File | What it does |
 |---|---|
 | `jobs/common.py` | Spark session (local mode, 2 GB driver, Chicago time zone), schemas, layout paths |
-| `jobs/convert.py` | CSV → Parquet. Reads every column as text, then casts, so bad values become NULL instead of shifting columns. Writes three layouts and counts rows in and out for each |
-| `jobs/questions.py` | The Spark job that answers Q1 and Q2 from Parquet |
-| `jobs/benchmark.py` | The deep part: the same three queries on all four layouts, 5 runs each, reporting the median |
-
-### Answers (from the running job)
+| `jobs/convert.py` | Converts the rows that passed the quality checks to Parquet in three layouts, counting rows in and out of each |
+| `jobs/questions.py` | The Spark job that answers Q1 and Q2 from month-partitioned Parquet |
+| `jobs/benchmark.py` | The deep part: the same three queries on four layouts, 5 runs each, median reported |
 
 **Q1. Which ten stations start the most trips, and how busy are they for their number of docks?**
 
 | Station | Docks | Trips started | Trips/dock/day |
 |---|---|---|---|
-| Streeter Dr & Grand Ave | 47 | 36,686 | 4.31 |
+| Streeter Dr & Grand Ave | 47 | 36,684 | 4.31 |
 | Clinton St & Washington Blvd | 31 | 22,429 | 4.00 |
-| Lake Shore Dr & Monroe St | 39 | 21,822 | 3.09 |
+| Lake Shore Dr & Monroe St | 39 | 21,820 | 3.09 |
 | Clinton St & Madison St | 31 | 19,098 | 3.40 |
 | Canal St & Adams St | 47 | 18,105 | 2.13 |
 | Lake Shore Dr & North Blvd | 39 | 17,729 | 2.51 |
@@ -50,113 +73,85 @@ To skip the benchmark (e.g. for the checkpoint recording): `SKIP_BENCHMARK=1 doc
 
 **Q2. Do annual members and day-pass riders ride at different times of day, and for how long?**
 
-Yes, on both counts. Members' trips peak at 8 am (9.7% of their trips) and 5 pm (12.9%), which is a commuting pattern. Day-pass riders' trips peak in the early afternoon, from 1 to 4 pm (about 10–11% of their trips each hour). Day-pass trips are also about 2.5 times as long: a median of 23.0 minutes, against 9.4 minutes for members. The full 24-hour table is in `output/q2_usertype_by_hour.csv`.
+Yes, on both counts. Members' trips peak at 8 am (9.7% of their trips) and 5 pm (12.9%), a commuting pattern. Day-pass riders peak from 1 to 4 pm (about 10–11% of their trips each hour). Day-pass trips are about 2.5 times as long: a median of 23.0 minutes, against 9.4 for members. The full table is in `output/q2_usertype_by_hour.csv`.
 
 ### Deep part: storage format and partitioning
 
-Run on 1,551,505 rows, Spark 3.5.3 in local mode on 2 cores. Each figure is the median of 5 runs, read fresh from disk each time.
+Measured on Docker Desktop on Windows, Spark 3.5.3 in local mode. Each time is the median of 5 runs, read fresh from disk.
 
 | Layout | Size (MB) | Files | Write (s) | Q1 (s) | Q2 (s) | June filter (s) |
 |---|---|---|---|---|---|---|
-| CSV (baseline) | 242.3 | 2 | – | 1.27 | 2.95 | 1.88 |
-| Parquet, flat | 41.5 | 2 | 3.3 | 0.33 | 1.39 | 0.25 |
-| Parquet, by month | 42.7 | 6 | 4.4 | 0.37 | 1.50 | 0.21 |
-| Parquet, by station | 54.1 | 582 | 10.6 | 3.65 | 5.39 | 3.31 |
+| CSV (baseline) | 242.3 | 2 | – | 4.07 | 5.04 | 3.85 |
+| Parquet, flat | 42.1 | 4 | 12.6 | 0.88 | 2.55 | 0.74 |
+| Parquet, by month | 42.7 | 6 | 25.2 | 1.05 | 2.75 | 0.67 |
+| Parquet, by station | 54.1 | 582 | 96.7 | 32.84 | 33.13 | 30.62 |
 
-Write times don't include parsing the CSV: the parsed data is cached once, then each layout is written from the cache.
+These timings were measured before the quality checks were added in front of Part 1, so the Parquet layouts held all 1,551,505 rows; they now hold the 1,551,494 that pass. Rerun the benchmark to refresh them.
 
-**How this compares with what the proposal expected:**
+Against what the proposal expected:
 
-1. **Parquet is at least 3× smaller than CSV: confirmed.** It is 5.8× smaller (242 MB → 41.5 MB), thanks to columnar compression and storing the timestamps as numbers instead of text.
-2. **Q1 and Q2 run at least 2× faster on Parquet: confirmed.** Q1 is 3.8× faster, because it reads one column instead of parsing all twelve. Q2 is 2.1× faster. It gains less because the work is grouping the rows and computing a median for each group, not reading the file.
-3. **Month partitions speed up the one-month filter: only slightly (0.25 → 0.21 s).** Flat Parquet already does almost as well. The source files are ordered by time, so each row group covers a narrow range of start times. Parquet stores the minimum and maximum of each row group, and Spark skips the groups that can't contain June. Partitioning would matter more for data that isn't already ordered by time, and for much bigger data, where listing the files and reading their footers starts to cost something.
-4. **Station partitions are slower than month partitions: confirmed, and by a lot.** They are 10× slower on Q1 and 16× slower on the June filter. With 582 small files, the time goes on opening files and scheduling tasks rather than on reading data. The files are also 30% bigger, because compression works less well on small files.
+1. **Parquet at least 3× smaller than CSV: confirmed.** 5.8× smaller, from columnar compression and storing timestamps as numbers rather than text.
+2. **Q1 and Q2 at least 2× faster on Parquet: confirmed for Q1, just missed for Q2.** Q1 is 4.6× faster, since it reads one column instead of parsing twelve. Q2 is 1.98× faster: most of its time goes on grouping rows and computing medians, which the file format doesn't speed up.
+3. **Month partitions speed up the one-month filter: only slightly** (0.74 → 0.67 s). The source data is ordered by time, so each Parquet row group covers a narrow range of start times, and Spark already skips the groups that can't contain June using their min/max statistics.
+4. **Station partitions slower than month partitions: confirmed, heavily.** About 31× slower on Q1, and 8× slower than raw CSV. With 582 small files, the time goes on opening files and scheduling tasks, not on reading data. Docker Desktop on Windows makes opening files in a shared folder especially slow; on Linux the gap was about 10×.
 
-**Decision:** Part 1 uses month-partitioned Parquet. It is about as fast as flat Parquet on every query here. It also matches the time-ordered data that Part 2 streams in, so new months can be added as new folders without rewriting the old ones.
+**Decision:** month-partitioned Parquet. It is as fast as flat Parquet here, and matches the time-ordered stream, so new months can be added as new folders.
 
-## Part 2: Kafka streaming
-
-Part 2 replays historical Divvy bike trips as a simulated live stream using Apache Kafka. A Python producer reads trip records from the 2017 Q1 and Q2 CSV files and publishes them to the `divvy-trips` Kafka topic. A consumer reads the events, prints each trip, and maintains an hourly running count by starting station.
-
-
-### Start it
-
-Install the Python dependency (requires `uv`):
-
-```bash
-uv venv
-uv pip install -r requirements.txt
-```
-
-Start the Kafka broker:
-
-```bash
-docker compose up -d kafka
-```
-
-Create the topic (only needed once):
-
-```bash
-docker exec divvy-kafka /opt/kafka/bin/kafka-topics.sh \
-  --create --if-not-exists \
-  --topic divvy-trips \
-  --bootstrap-server localhost:9092 \
-  --partitions 3 \
-  --replication-factor 1
-```
-
-Open two terminals in the project directory.
-
-**Terminal 1 — Consumer:**
-
-```bash
-uv run --no-project python stream/consumer.py --limit 100
-```
-
-**Terminal 2 — Producer:**
-
-```bash
-uv run --no-project python stream/producer.py --limit 100 --delay 0.05
-```
-
-The producer sends 100 historical trips into Kafka. The consumer reads the events, prints each trip's station, hour and running count, then displays the aggregated hourly totals.
-
-For a clean demonstration, use a newly created empty topic. Otherwise, the consumer may replay messages from previous runs.
-
-
-### Files
+## Part 2: Stream (owner: Abdirahman)
 
 | File | What it does |
 |---|---|
-| `stream/producer.py` | Reads Divvy trip CSV rows and publishes trip events to Kafka, with a configurable event limit and delay |
-| `stream/consumer.py` | Consumes Kafka events, prints incoming trips, counts trips by station and hour, and skips duplicate trip IDs within a run |
-| `docker-compose.yml` | Runs the Kafka broker alongside the existing Spark service |
+| `stream/producer.py` | Reads every trip, sorts by `start_time`, and sends oldest first to the `divvy-trips` topic, keyed by station. `--delay` sets a fixed gap between messages; `--speedup N` paces by event time instead (N seconds of trips per real second) |
+| `stream/consumer.py` | Console consumer: prints each trip and keeps a running count of trips per station per hour |
 
-### Question 3: How many trips are starting at each station this hour?
+The topic has 3 partitions. Keying by station sends all of a station's trips to the same partition, so they stay in order. Rows the producer can't read (for example a blank station ID) are sent as-is, first, so the stream checks catch them rather than the producer crashing.
 
-The consumer groups incoming trip events by `from_station_id` and the hour extracted from `start_time`. Each unique trip increments the corresponding station-hour count.
+## Part 3: Serve (owner: Haris)
 
-Example output from a clean 100-event test:
+PostgreSQL 16. `serve/schema.sql` creates the tables; `serve/queries.sql` answers the three questions; `serve/measure.py` times each one (50 runs after a warm-up) into `results/serve_response_times.csv`.
 
-```text
-Station 2   | 2017-03-31 22:00 | 4 trips
-Station 81  | 2017-03-31 22:00 | 3 trips
-Station 117 | 2017-03-31 23:00 | 3 trips
-Station 284 | 2017-03-31 22:00 | 4 trips
-Station 327 | 2017-03-31 23:00 | 2 trips
+| Question | Table | Filled by |
+|---|---|---|
+| Q1 | `q1_top_stations` | `serve/load_batch.py`, from Spark's output |
+| Q2 | `q2_usertype_by_hour` | `serve/load_batch.py`, from Spark's output |
+| Q3 | `station_hourly_counts` (plus every trip in `trip_starts`) | `serve/stream_to_db.py`, from Kafka |
 
-[consumer] Processed 100 events.
-[consumer] Skipped 0 duplicate events.
-```
+The stream sink saves each batch of trips and updates the hourly counts in one transaction, and only then commits its Kafka offsets. If it crashes and Kafka resends messages, the primary key on `trip_id` skips trips already stored, so no trip is counted twice.
 
-The consumer successfully processed all 100 events without duplicates. These results demonstrate hourly trip counting using historical Divvy data replayed through Kafka.
+## Part 4: Quality and monitoring (owner: Haris)
 
-### Streaming design
+The rules live in `quality/rules.py`, shared by both pipelines.
 
-The producer sends events containing `trip_id`, `start_time`, and `from_station_id`. Kafka stores them in the `divvy-trips` topic, configured with three partitions and a replication factor of one.
+| Check | Severity | Batch | Stream |
+|---|---|---|---|
+| `schema` — a value doesn't parse as its type | reject | ✓ | ✓ |
+| `missing_required` — a required field is blank | reject | ✓ | ✓ |
+| `impossible_range` — duration ≤ 0 or over 24 h, end before start, start outside Jan–Jun 2017 | reject | ✓ | ✓ |
+| `invalid_category` — unknown user type or gender | reject | ✓ | |
+| `duplicate_trip` — the same `trip_id` again | reject | ✓ | ✓ |
+| `unknown_station` — a station not in the stations table | reject | ✓ | ✓ |
+| `suspicious_birthyear` — outside 1920–2005 | warn | ✓ | |
+| `duration_mismatch` — duration disagrees with end − start | warn | ✓ | |
 
-The station ID is used as the Kafka message key, so events from the same station are assigned to the same partition. The consumer processes the events and updates the hourly counts.
+Rejected rows go to the `quarantine` table with the checks they failed, instead of being dropped. Rows in and out are counted at every stage (`stage_counts`). A check failing on more than its threshold (0.1% for rejects) raises an alert; in the batch pipeline it also stops the run before bad data is converted (`QUALITY_FAIL_ON_ALERT=0` to carry on).
 
-Unlike Part 1, which analyzes the complete historical dataset using Spark, Part 2 processes trip events incrementally as they arrive.
+On the real data: 11 trips appear twice (exact copies), so 11 rows are quarantined and 1,551,494 pass. 558 rows have an unlikely birth year and are kept with a warning.
 
+### Demo: a bad row added by hand
 
+1. Add this line to the end of `data/raw/Divvy_Trips_2017_Q2.csv` (negative duration, station 9999 doesn't exist, start time early enough to be in the first 20,000 streamed trips):
+   ```
+   "99999999","1/1/2017 00:00:00","1/1/2017 00:10:00","1","-5","9999","Fake station","9999","Fake station","Subscriber","Male","1990"
+   ```
+2. `docker compose down -v`, then `docker compose up --build`.
+3. Batch: the checks print the row as failing `impossible_range` and `unknown_station`, with the counts. Stream: the sink prints it as `REJECTED ... unknown_station`.
+4. `docker compose run --rm report` shows it in the quarantine table, with rows in = rows out + set aside at every stage.
+5. Delete the line afterwards.
+
+## Team
+
+| Member | Owns |
+|---|---|
+| Shakeer Nawaz | Part 1 and the deep part |
+| Abdirahman Abdulahi | Part 2 |
+| Haris Sujethan | Parts 3 and 4 |

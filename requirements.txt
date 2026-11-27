@@ -1,1 +1,4 @@
-kafka-python
+# For running the Python scripts directly on your machine (optional: Docker
+# Compose runs them for you). Same versions as the Docker image.
+kafka-python==3.0.13
+psycopg[binary]==3.3.9

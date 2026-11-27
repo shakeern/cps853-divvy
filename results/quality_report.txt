@@ -1,0 +1,75 @@
+==============================================================================
+PART 4  QUALITY AND MONITORING REPORT
+==============================================================================
+
+BATCH PIPELINE  (run batch-20261127-025015)
+
+Quality checks on the raw CSVs:
+  check                 severity  rows checked  rows failed  % failed  alert at  status
+  --------------------  --------  ------------  -----------  --------  --------  ------
+  duplicate_trip        reject       1,551,505           11   0.0007%   0.1000%  FAIL  
+  impossible_range      reject       1,551,505            0   0.0000%   0.1000%  PASS  
+  invalid_category      reject       1,551,505            0   0.0000%   0.1000%  PASS  
+  missing_required      reject       1,551,505            0   0.0000%   0.1000%  PASS  
+  schema                reject       1,551,505            0   0.0000%   0.1000%  PASS  
+  unknown_station       reject       1,551,505            0   0.0000%   0.1000%  PASS  
+  duration_mismatch     warn         1,551,505            0   0.0000%   1.0000%  PASS  
+  suspicious_birthyear  warn         1,551,505          558   0.0360%   1.0000%  WARN  
+
+Rows in and out at every stage:
+  step  stage                           rows in    rows out   set aside  balanced  note                                                                                              
+  ----  ------------------------------  ---------  ---------  ---------  --------  --------------------------------------------------------------------------------------------------
+     1  raw CSV files                   1,551,505  1,551,505          0  yes       rows read from data/raw                                                                           
+     2  quality checks                  1,551,505  1,551,494         11  yes       rejected rows moved to the quarantine table                                                       
+     3  Parquet, by month (Part 1)      1,551,494  1,551,494          0  yes       Part 1 converts only the rows that passed the checks                                              
+     4  Spark Q2 (Part 1)               1,551,494  1,551,490          4  yes       set aside = 'Dependent' riders, left out of Q2 by design (it compares members and day-pass riders)
+     5  PostgreSQL stations                   582        582          0  yes       rows in the file vs rows in the table                                                             
+     6  PostgreSQL q1_top_stations             10         10          0  yes       rows in the file vs rows in the table                                                             
+     7  PostgreSQL q2_usertype_by_hour         48         48          0  yes       rows in the file vs rows in the table                                                             
+     8  PostgreSQL quarantine                  11         11          0  yes       rows in the file vs rows in the table                                                             
+
+STREAM PIPELINE  (latest run stream-20261127-025144)
+
+  Messages in Kafka topic 'divvy-trips': 3,875
+
+Quality checks on the Kafka messages (latest run):
+  check             severity  rows checked  rows failed  % failed  alert at  status
+  ----------------  --------  ------------  -----------  --------  --------  ------
+  duplicate_trip    reject           3,863            0   0.0000%   0.1000%  PASS  
+  impossible_range  reject           3,863            0   0.0000%   0.1000%  PASS  
+  missing_required  reject           3,863            0   0.0000%   0.1000%  PASS  
+  schema            reject           3,863            0   0.0000%   0.1000%  PASS  
+  unknown_station   reject           3,863            0   0.0000%   0.1000%  PASS  
+
+Rows in and out at every stage (latest run):
+  step  stage                     rows in  rows out  set aside  balanced  note                                                  
+  ----  ------------------------  -------  --------  ---------  --------  ------------------------------------------------------
+     1  messages read from Kafka    3,869     3,869          0  yes       topic divvy-trips, consumer group divvy-serve-postgres
+     2  quality checks              3,869     3,869          0  yes       failing messages put in the quarantine table          
+     3  trip_starts (Q3)            3,869     3,869          0  yes       set aside = trip_id already stored (duplicate)        
+
+  All 1 stream runs: 3,869 messages read, 3,869 trips stored, 0 duplicates skipped, 0 quarantined
+
+Stream reconciliation (Q3 counts vs the trips they were built from):
+  trips stored in trip_starts:          3,869
+  sum of station_hourly_counts:         3,869
+  station-hours that disagree with a recount: 0  -> OK
+
+ALERTS (latest 10)
+  raised at  pipeline  run  message
+  ---------  --------  ---  -------
+  (none)
+
+QUARANTINE  (rows set aside, by source and failed check)
+  source  check           rows
+  ------  --------------  ----
+  batch   duplicate_trip    11
+
+Most recent quarantined rows:
+  id  source  failed checks   trip_id   where                    raw (first 70 characters)                                             
+  --  ------  --------------  --------  -----------------------  ----------------------------------------------------------------------
+  11  batch   duplicate_trip  13762609  Divvy_Trips_2017_Q2.csv  {"trip_id":"13762609","start_time":"4/23/2017 13:56:41","end_time":"4/
+  10  batch   duplicate_trip  13762620  Divvy_Trips_2017_Q2.csv  {"trip_id":"13762620","start_time":"4/23/2017 13:57:00","end_time":"4/
+   9  batch   duplicate_trip  13763383  Divvy_Trips_2017_Q2.csv  {"trip_id":"13763383","start_time":"4/23/2017 14:29:58","end_time":"4/
+   8  batch   duplicate_trip  13763403  Divvy_Trips_2017_Q2.csv  {"trip_id":"13763403","start_time":"4/23/2017 14:30:30","end_time":"4/
+   7  batch   duplicate_trip  13763843  Divvy_Trips_2017_Q2.csv  {"trip_id":"13763843","start_time":"4/23/2017 14:48:29","end_time":"4/

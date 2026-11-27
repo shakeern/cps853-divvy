@@ -1,0 +1,9 @@
+run_id,pipeline,check_name,severity,description,rows_checked,rows_failed,pct_failed,threshold_pct,status
+batch-20261127-025015,batch,schema,reject,"a value doesn't parse as its type, or the row has the wrong number of columns",1551505,0,0.0,0.1,PASS
+batch-20261127-025015,batch,missing_required,reject,a required field is blank,1551505,0,0.0,0.1,PASS
+batch-20261127-025015,batch,impossible_range,reject,"duration <= 0 or over 24 h, end before start, or start outside Jan-Jun 2017",1551505,0,0.0,0.1,PASS
+batch-20261127-025015,batch,invalid_category,reject,usertype or gender is not one of the known values,1551505,0,0.0,0.1,PASS
+batch-20261127-025015,batch,duplicate_trip,reject,the same trip_id appears again (the first copy is kept),1551505,11,0.0007,0.1,FAIL
+batch-20261127-025015,batch,unknown_station,reject,a station ID that isn't in the stations table,1551505,0,0.0,0.1,PASS
+batch-20261127-025015,batch,suspicious_birthyear,warn,birth year outside 1920-2005,1551505,558,0.036,1.0,WARN
+batch-20261127-025015,batch,duration_mismatch,warn,tripduration differs from end - start by over 120 s,1551505,0,0.0,1.0,PASS

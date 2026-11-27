@@ -1,20 +1,79 @@
 # CPS 853 Team 7 - Divvy data platform.
-# Part 1 (Store and batch) is the spark-batch service. Parts 2-4 (Kafka,
-# PostgreSQL, quality checks) get added as more services in this file.
+#
+# `docker compose up --build` runs the whole system, each step waiting for the
+# one before it:
+#
+#   get-data -> spark-batch (Part 4 checks, Part 1 convert, Q1/Q2, benchmark)
+#            -> load-batch (Part 3: answers and check results into PostgreSQL)
+#   kafka -> kafka-init (create the topic)
+#   load-batch + kafka-init -> producer (Part 2) and stream-sink (Parts 3 and 4)
+#
+# The batch job finishes before the stream starts, so Spark, Kafka and
+# PostgreSQL are never all busy at once on an 8 GB laptop.
+# Not started by `up`: report (`docker compose run --rm report`) and the Part 2
+# console consumer (`docker compose run --rm consumer`).
+
+# Shared by every Python step that isn't Spark. Same image as spark-batch.
+x-app: &app
+  build: .
+  image: cps853-divvy:latest
+  working_dir: /app
+  environment: &app-env
+    PGHOST: postgres
+    PGUSER: ${PGUSER:-divvy}
+    PGPASSWORD: ${PGPASSWORD:-divvy}
+    PGDATABASE: ${PGDATABASE:-divvy}
+    KAFKA_BOOTSTRAP: kafka:19092
+  mem_limit: 512m
+
 services:
+  # Step 1: download the 2017 Q1/Q2 CSVs into data/raw/ (skipped if already there).
+  get-data:
+    <<: *app
+    container_name: divvy-get-data
+    command: ["python", "scripts/get_data.py"]
+    volumes:
+      - ./data:/app/data
+
+  # Step 2, Part 1 (with Part 4's checks as its first stage).
   spark-batch:
     build: .
+    image: cps853-divvy:latest
     container_name: divvy-spark-batch
+    depends_on:
+      get-data:
+        condition: service_completed_successfully
     environment:
       SPARK_DRIVER_MEMORY: 2g
       BENCH_RUNS: ${BENCH_RUNS:-5}
-      SKIP_BENCHMARK: ${SKIP_BENCHMARK:-0}
+      # The benchmark takes several minutes, so `up` skips it. Run it with:
+      #   docker compose run --rm -e SKIP_BENCHMARK=0 spark-batch
+      SKIP_BENCHMARK: ${SKIP_BENCHMARK:-1}
+      # Part 4 alert settings (see quality/rules.py)
+      QUALITY_FAIL_ON_ALERT: ${QUALITY_FAIL_ON_ALERT:-1}
+      QUALITY_ALERT_PCT: ${QUALITY_ALERT_PCT:-}
     volumes:
       - ./data:/app/data # raw CSVs in, Parquet lake out
-      - ./output:/app/output # Q1/Q2 answers, loaded into the database in Part 3
-      - ./results:/app/results # sizes and benchmark timings for the report
+      - ./output:/app/output # Q1/Q2 answers and quarantined rows, loaded into the database in Part 3
+      - ./results:/app/results # sizes, benchmark timings and check results for the report
     mem_limit: 3g # leaves room for Kafka + PostgreSQL on an 8 GB laptop
 
+  # Step 3, Part 3: load the batch answers and Part 4's batch results.
+  load-batch:
+    <<: *app
+    container_name: divvy-load-batch
+    command: ["python", "serve/load_batch.py"]
+    depends_on:
+      spark-batch:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro
+      - ./output:/app/output:ro
+      - ./results:/app/results:ro
+
+  # Part 2: the broker.
   kafka:
     image: apache/kafka:3.9.1
     hostname: kafka
@@ -34,4 +93,104 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 > /dev/null 2>&1"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
     mem_limit: 1g
+
+  # Part 2: create the divvy-trips topic (does nothing if it exists).
+  kafka-init:
+    image: apache/kafka:3.9.1
+    container_name: divvy-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint:
+      - /opt/kafka/bin/kafka-topics.sh
+      - --create
+      - --if-not-exists
+      - --topic
+      - divvy-trips
+      - --bootstrap-server
+      - kafka:19092
+      - --partitions
+      - "3"
+      - --replication-factor
+      - "1"
+    mem_limit: 512m
+
+  # Part 2: replay trips into Kafka in start_time order, sped up. STREAM_LIMIT=0 sends every trip.
+  producer:
+    <<: *app
+    container_name: divvy-producer
+    command: ["python", "stream/producer.py",
+              "--limit", "${STREAM_LIMIT:-20000}", "--delay", "${STREAM_DELAY:-0.001}"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      load-batch:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/app/data:ro
+
+  # Parts 3 and 4: check each Kafka message, store it in PostgreSQL for Q3.
+  # Keeps running, so trips sent later are picked up too.
+  stream-sink:
+    <<: *app
+    container_name: divvy-stream-sink
+    command: ["python", "serve/stream_to_db.py"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      load-batch:
+        condition: service_completed_successfully
+    restart: on-failure
+
+  # Part 3: the database.
+  # Local development credentials only; override with PG* variables.
+  postgres:
+    image: postgres:16-alpine
+    container_name: divvy-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${PGUSER:-divvy}
+      POSTGRES_PASSWORD: ${PGPASSWORD:-divvy}
+      POSTGRES_DB: ${PGDATABASE:-divvy}
+    volumes:
+      - pgdata:/var/lib/postgresql/data # survives restarts; `docker compose down -v` wipes it
+      - ./serve:/serve:ro # so queries.sql can be run inside the container
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    mem_limit: 512m
+
+  # Parts 3 and 4: response times for the three questions, then the quality
+  # report. Run on demand: docker compose run --rm report
+  report:
+    <<: *app
+    profiles: ["tools"]
+    command: ["sh", "-c", "python serve/measure.py && echo && python quality/report.py"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./results:/app/results
+
+  # Part 2's console consumer, for the checkpoint demo:
+  #   docker compose run --rm consumer
+  consumer:
+    <<: *app
+    profiles: ["tools"]
+    command: ["python", "stream/consumer.py", "--limit", "${CONSUMER_LIMIT:-100}"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:

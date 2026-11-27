@@ -1,0 +1,9 @@
+# Keep the build context small: the image needs code only. Data, outputs and
+# results are mounted into the containers at run time.
+.git
+.venv
+data
+output
+results
+**/__pycache__
+**/.DS_Store
