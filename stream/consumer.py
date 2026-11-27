@@ -1,12 +1,13 @@
 import argparse
 import json
+import os
 from collections import defaultdict
 from datetime import datetime
 
 from kafka import KafkaConsumer
 
 TOPIC = "divvy-trips"
-BOOTSTRAP_SERVERS = "localhost:9092"
+BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")  # "kafka:19092" inside Docker Compose
 
 
 def main():

@@ -1,13 +1,14 @@
 import argparse
 import csv
 import json
+import os
 import time
 from pathlib import Path
 
 from kafka import KafkaProducer
 
 TOPIC = "divvy-trips"
-BOOTSTRAP_SERVERS = "localhost:9092"
+BOOTSTRAP_SERVERS = os.environ.get("KAFKA_BOOTSTRAP", "localhost:9092")  # "kafka:19092" inside Docker Compose
 
 DATA_FILES = [
     Path("data/raw/Divvy_Trips_2017_Q1.csv"),
