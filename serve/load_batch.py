@@ -40,6 +40,12 @@ def read_csv(path: Path, required=True) -> list[dict]:
         return list(csv.DictReader(f))
 
 
+def whole(value: str) -> int:
+    """An integer from a CSV cell. Accepts "7" and "7.0": when a column has a blank
+    cell, pandas (which writes Part 1's answers) writes the whole column as decimals."""
+    return int(float(value))
+
+
 def none_if_blank(value: str):
     return value if value not in ("", None) else None
 
@@ -81,7 +87,7 @@ def batch_stages(run_id, stage_rows, q2):
     if not SIZES_CSV.exists() or SIZES_CSV.stat().st_mtime < CHECKS_CSV.stat().st_mtime:
         return stages, "Parquet stage not counted: Part 1 hasn't converted the data since these checks ran."
     parquet_rows = next(int(r["rows"]) for r in read_csv(SIZES_CSV) if r["layout"] == "parquet_by_month")
-    used_by_q2 = sum(int(r["trips"]) for r in q2)
+    used_by_q2 = sum(whole(r["trips"]) for r in q2)
     stages += [
         (run_id, 3, "Parquet, by month (Part 1)", raw_rows, parquet_rows, raw_rows - parquet_rows,
          "Part 1 converts every raw row; rows the checks rejected are flagged, not removed"),
@@ -99,14 +105,14 @@ def main():
     ]
     q1_raw = read_csv(Q1_CSV)
     q1 = [
-        (rank, int(r["station_id"]), r["station_name"], int(r["dpcapacity"]),
-         int(r["trips_started"]), r["trips_per_dock"], r["trips_per_dock_per_day"])
+        (rank, whole(r["station_id"]), r["station_name"], whole(r["dpcapacity"]),
+         whole(r["trips_started"]), r["trips_per_dock"], r["trips_per_dock_per_day"])
         for rank, r in enumerate(complete(q1_raw, ["station_id", "dpcapacity", "trips_started"],
                                           "q1_top_stations.csv"), start=1)
     ]
     q2_raw = read_csv(Q2_CSV)
     q2 = [
-        (r["usertype"], int(r["hour"]), int(r["trips"]), none_if_blank(r["avg_minutes"]),
+        (r["usertype"], whole(r["hour"]), whole(r["trips"]), none_if_blank(r["avg_minutes"]),
          none_if_blank(r["median_minutes"]), none_if_blank(r["pct_of_type"]))
         for r in complete(q2_raw, ["usertype", "hour", "trips"], "q2_usertype_by_hour.csv")
     ]
