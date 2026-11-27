@@ -1,0 +1,3 @@
+run_id,pipeline,step,stage,rows_in,rows_out,rows_set_aside,note
+batch-20261127-025015,batch,1,raw CSV files,1551505,1551505,0,rows read from data/raw
+batch-20261127-025015,batch,2,quality checks,1551505,1551494,11,rejected rows moved to the quarantine table

@@ -20,9 +20,8 @@ FROM q2_usertype_by_hour
 GROUP BY hour
 ORDER BY hour;
 
--- The stream replays 2017 trips, so "this hour" is the hour of the trip that
--- arrived last, not the clock on the wall. (The Divvy files run newest trip
--- first, so the latest start_time would stay stuck on the first hour sent.)
+-- The stream replays 2017 trips in start_time order, so "this hour" is the
+-- hour of the trip that arrived last, not the clock on the wall.
 \echo
 \echo 'Q3  How many trips are starting at each station this hour?  (hour of the latest trip received)'
 SELECT c.hour_start AS this_hour, c.station_id, s.station_name, c.trips,

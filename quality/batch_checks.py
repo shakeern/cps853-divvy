@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 
 from pyspark.sql import Window, functions as F, types as T
 
-from common import OUTPUT, RESULTS, TRIPS_CSV, TRIPS_RAW_SCHEMA, TS_FMT, read_stations_csv, spark_session
+from common import CHECKED_TRIPS, OUTPUT, RESULTS, TRIPS_CSV, TRIPS_RAW_SCHEMA, TS_FMT, read_stations_csv, spark_session
 from quality import rules
 
 RAW_COLUMNS = [f.name for f in TRIPS_RAW_SCHEMA.fields]
@@ -161,8 +161,14 @@ def main():
         w.writerow(["run_id", "pipeline", "step", "stage", "rows_in", "rows_out", "rows_set_aside", "note"])
         w.writerow([run_id, "batch", 1, "raw CSV files", rows_in, rows_in, 0, "rows read from data/raw"])
         w.writerow([run_id, "batch", 2, "quality checks", rows_in, rows_in - rejected, rejected,
-                    "rejected rows copied to the quarantine table"])
+                    "rejected rows moved to the quarantine table"])
     print(f"[quality] results in {RESULTS}/quality_checks.csv, rejected rows in {QUARANTINE_CSV}")
+
+    # The rows that passed, still as text, for convert.py. Rejected rows are
+    # only in the quarantine file, so they never reach Q1 and Q2.
+    (flagged.filter(~F.col("rejected")).select(*RAW_COLUMNS)
+     .write.mode("overwrite").parquet(CHECKED_TRIPS))
+    print(f"[quality] {rows_in - rejected:,} rows that passed written to {CHECKED_TRIPS} for Part 1")
 
     flagged.unpersist()
     spark.stop()

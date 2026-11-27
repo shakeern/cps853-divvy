@@ -1,0 +1,4 @@
+# Keep Linux line endings on every OS: the scripts run inside Linux containers,
+# and bash fails on a CRLF shell script.
+* text=auto eol=lf
+*.csv -text

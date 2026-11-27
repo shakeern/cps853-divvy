@@ -46,7 +46,9 @@ services:
     environment:
       SPARK_DRIVER_MEMORY: 2g
       BENCH_RUNS: ${BENCH_RUNS:-5}
-      SKIP_BENCHMARK: ${SKIP_BENCHMARK:-0}
+      # The benchmark takes several minutes, so `up` skips it. Run it with:
+      #   docker compose run --rm -e SKIP_BENCHMARK=0 spark-batch
+      SKIP_BENCHMARK: ${SKIP_BENCHMARK:-1}
       # Part 4 alert settings (see quality/rules.py)
       QUALITY_FAIL_ON_ALERT: ${QUALITY_FAIL_ON_ALERT:-1}
       QUALITY_ALERT_PCT: ${QUALITY_ALERT_PCT:-}
@@ -120,7 +122,7 @@ services:
       - "1"
     mem_limit: 512m
 
-  # Part 2: replay trips into Kafka, sped up. STREAM_LIMIT=0 sends every trip.
+  # Part 2: replay trips into Kafka in start_time order, sped up. STREAM_LIMIT=0 sends every trip.
   producer:
     <<: *app
     container_name: divvy-producer

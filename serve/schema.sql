@@ -52,9 +52,8 @@ CREATE TABLE IF NOT EXISTS trip_starts (
     kafka_partition INTEGER   NOT NULL,
     kafka_offset    BIGINT    NOT NULL,
     received_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- Arrival order. The Divvy files run newest trip first, so the stream
-    -- moves backwards in time: "this hour" means the hour of the trip that
-    -- arrived last, not the latest start_time.
+    -- Arrival order. The producer sends trips in start_time order, so the
+    -- trip that arrived last is also the latest one: "this hour" is its hour.
     ingest_seq      BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE
 );
 

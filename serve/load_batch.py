@@ -80,7 +80,7 @@ def batch_stages(run_id, stage_rows, q2):
     """
     stages = [(run_id, int(r["step"]), r["stage"], int(r["rows_in"]), int(r["rows_out"]),
                int(r["rows_set_aside"]), r["note"]) for r in stage_rows]
-    raw_rows = stages[0][3]
+    passed_rows = stages[-1][4]  # rows out of the quality-check stage
 
     # Did convert.py run after the checks? If the checks raised an alert and
     # stopped the pipeline, storage_sizes.csv is from an older run.
@@ -89,8 +89,8 @@ def batch_stages(run_id, stage_rows, q2):
     parquet_rows = next(int(r["rows"]) for r in read_csv(SIZES_CSV) if r["layout"] == "parquet_by_month")
     used_by_q2 = sum(whole(r["trips"]) for r in q2)
     stages += [
-        (run_id, 3, "Parquet, by month (Part 1)", raw_rows, parquet_rows, raw_rows - parquet_rows,
-         "Part 1 converts every raw row; rows the checks rejected are flagged, not removed"),
+        (run_id, 3, "Parquet, by month (Part 1)", passed_rows, parquet_rows, passed_rows - parquet_rows,
+         "Part 1 converts only the rows that passed the checks"),
         (run_id, 4, "Spark Q2 (Part 1)", parquet_rows, used_by_q2, parquet_rows - used_by_q2,
          "set aside = 'Dependent' riders, left out of Q2 by design (it compares members and day-pass riders)"),
     ]
